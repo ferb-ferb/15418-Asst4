@@ -13,8 +13,8 @@ You are obligated to keep your own solutions private from now until eternity.
 ## Starter Code Structure
 
 - [`code/`](code/) — core code you will modify/extend for this assignment  
-- [`examples/`](examples/) — example OpenMP code  
-- [`tutorials/`](tutorials/) — OpenMP and PSC tutorials  
+- [`examples/`](examples/) — example MPI code  
+- [`tutorials/`](tutorials/) — PSC tutorial
 - [`Makefile`](Makefile) — supports:
   - `make handin` (submission packaging)
   - `make clean` (cleanup)
