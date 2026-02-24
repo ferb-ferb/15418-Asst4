@@ -6,15 +6,18 @@
 #include "wireroute.h"
 
 #include <algorithm>
-#include <iostream>
-#include <unistd.h>
+#include <cassert>
+#include <chrono>
+#include <cmath>
 #include <fstream>
 #include <iomanip>
-#include <chrono>
+#include <iostream>
+#include <random>
 #include <string>
 #include <vector>
 
 #include <mpi.h>
+#include <unistd.h>
 
 void print_stats(const std::vector<std::vector<int>> &occupancy) {
   int max_occupancy = 0;
@@ -97,7 +100,6 @@ int main(int argc, char *argv[]) {
   std::string input_filename;
   double SA_prob = 0.1;
   int SA_iters = 5;
-  char parallel_mode = '\0';
   int batch_size = 1;
 
   // Read command line arguments
@@ -113,15 +115,12 @@ int main(int argc, char *argv[]) {
       case 'i':
         SA_iters = atoi(optarg);
         break;
-      case 'm':
-        parallel_mode = *optarg;
-        break;
       case 'b':
         batch_size = atoi(optarg);
         break;
       default:
         if (pid == 0) {
-          std::cerr << "Usage: " << argv[0] << " -f input_filename [-p SA_prob] [-i SA_iters] -m parallel_mode -b batch_size\n";
+          std::cerr << "Usage: " << argv[0] << " -f input_filename [-p SA_prob] [-i SA_iters] -b batch_size\n";
         }
 
         MPI_Finalize();
@@ -130,9 +129,9 @@ int main(int argc, char *argv[]) {
   }
 
   // Check if required options are provided
-  if (empty(input_filename) || SA_iters <= 0 || (parallel_mode != 'A' && parallel_mode != 'W') || batch_size <= 0) {
+  if (empty(input_filename) || SA_iters <= 0 || batch_size <= 0) {
     if (pid == 0) {
-      std::cerr << "Usage: " << argv[0] << " -f input_filename [-p SA_prob] [-i SA_iters] -m parallel_mode -b batch_size\n";
+      std::cerr << "Usage: " << argv[0] << " -f input_filename [-p SA_prob] [-i SA_iters] -b batch_size\n";
     }
 
     MPI_Finalize();
@@ -144,7 +143,6 @@ int main(int argc, char *argv[]) {
     std::cout << "Simulated annealing probability parameter: " << SA_prob << '\n';
     std::cout << "Simulated annealing iterations: " << SA_iters << '\n';
     std::cout << "Input file: " << input_filename << '\n';
-    std::cout << "Parallel mode: " << parallel_mode << '\n';
     std::cout << "Batch size: " << batch_size << '\n';
   }
 

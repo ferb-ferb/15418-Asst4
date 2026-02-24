@@ -59,8 +59,9 @@ bend3_y; but this might not be the most efficient way to define the solution
 space for a wire with <= 3 bends.
 */
 struct Wire {
-  /* Define the data structure for wire here. */ 
-  int start_x, start_y, end_x, end_y, bend1_x, bend1_y;
+  /* Define the data structure for wire here. */
+  int start_x, start_y, end_x, end_y, mid_x, mid_y;
+  bool move_x_start, move_x_end;
   validate_wire_t to_validate_format(void) const;
 };
 
@@ -77,5 +78,10 @@ struct wr_checker {
         dim_x(occupancies[0].size()), dim_y(occupancies.size()) {}
   void validate() const;
 };
+
+const char *get_option_string(const char *option_name,
+                              const char *default_value);
+int get_option_int(const char *option_name, int default_value);
+float get_option_float(const char *option_name, float default_value);
 
 #endif

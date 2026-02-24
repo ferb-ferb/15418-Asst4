@@ -18,9 +18,7 @@ code/
 
 ### Key source files
 
-- **`wireroute.cpp`** — Contains `main()` with command-line parsing, file I/O, timing, and output writing. The wire routing algorithm itself is left as a **TODO** for students to implement using OpenMP. Two parallel modes are expected:
-  - Mode `W` (within-wire): parallelize the search within each wire's solution space.
-  - Mode `A` (across-wire): parallelize across batches of wires.
+- **`wireroute.cpp`** — Contains `main()` with command-line parsing, file I/O, timing, and output writing. The wire routing algorithm itself is left as a **TODO** for students to implement using OpenMP. 
 - **`wireroute.h`** — Defines the `Wire` struct (students may redefine this), `validate_wire_t` (keypoint representation for up to 3 bends), and `wr_checker` for validating consistency between wires and the occupancy grid.
 - **`validate.cpp`** — Implements `wr_checker::validate()`, which recomputes occupancy from wire keypoints and checks it against the maintained occupancy grid.
 - **`plot_wires.py`** — Reads a wire output file and generates a PNG visualization of the routed wires on the grid.
@@ -69,7 +67,6 @@ This produces the `wireroute` binary in the current directory.
 |------|-------------|
 | `-f` | Path to input file |
 | `-n` | Number of OpenMP threads (must be > 0) |
-| `-m` | Parallel mode: `W` (within-wire) or `A` (across-wire) |
 | `-b` | Batch size for across-wire mode (must be > 0) |
 
 **Optional flags:**
@@ -82,11 +79,11 @@ This produces the `wireroute` binary in the current directory.
 **Example:**
 
 ```bash
-# Within-wire parallelism, 4 threads, 10 SA iterations
-./wireroute -f inputs/debug/sample_8_8wires.txt -n 4 -m W -b 1 -i 10
+# 4 threads, 10 SA iterations
+./wireroute -f inputs/debug/sample_8_8wires.txt -n 4 -b 1 -i 10
 
-# Across-wire parallelism, 8 threads, batch size 4
-./wireroute -f inputs/timeinput/medium_wires.txt -n 8 -m A -b 4 -i 5 -p 0.1
+# 8 threads, batch size 4
+./wireroute -f inputs/timeinput/medium_wires.txt -n 8 -b 4 -i 5 -p 0.1
 ```
 
 Output files are written to `outputs/`:
