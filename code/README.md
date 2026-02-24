@@ -18,7 +18,7 @@ code/
 
 ### Key source files
 
-- **`wireroute.cpp`** — Contains `main()` with command-line parsing, file I/O, timing, and output writing. The wire routing algorithm itself is left as a **TODO** for students to implement using OpenMP. 
+- **`wireroute.cpp`** — Contains `main()` with command-line parsing, file I/O, timing, and output writing. The wire routing algorithm itself is left as a **TODO** for students to implement using MPI. 
 - **`wireroute.h`** — Defines the `Wire` struct (students may redefine this), `validate_wire_t` (keypoint representation for up to 3 bends), and `wr_checker` for validating consistency between wires and the occupancy grid.
 - **`validate.cpp`** — Implements `wr_checker::validate()`, which recomputes occupancy from wire keypoints and checks it against the maintained occupancy grid.
 - **`plot_wires.py`** — Reads a wire output file and generates a PNG visualization of the routed wires on the grid.
@@ -44,7 +44,7 @@ See `wireroute.h` for the `validate_wire_t` struct definition and `validate.cpp`
 
 ## Build Instructions
 
-Requires `g++` with C++17 and OpenMP support.
+Requires `g++` with C++17 and MPI support.
 
 ```bash
 make          # Build the wireroute executable
@@ -66,7 +66,7 @@ This produces the `wireroute` binary in the current directory.
 | Flag | Description |
 |------|-------------|
 | `-f` | Path to input file |
-| `-n` | Number of OpenMP threads (must be > 0) |
+| `-n` | Number of MPI threads (must be > 0) |
 | `-b` | Batch size for across-wire mode (must be > 0) |
 
 **Optional flags:**
