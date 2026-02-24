@@ -1,5 +1,5 @@
 # CMU 15-418/618 — Spring 2026  
-## Assignment 3 Parallel Wire Routing using MPI
+## Assignment 4 Parallel Wire Routing using MPI
 
 This repository contains the starter code for **Assignment 4** of **CMU 15-418/618 (Spring 2026)**.
 
