@@ -58,7 +58,7 @@ This produces the `wireroute` binary in the current directory.
 ### Running `wireroute`
 
 ```
-./wireroute -f <input_file> -n <num_threads> -m <parallel_mode> -b <batch_size> [-p <SA_prob>] [-i <SA_iters>]
+mpirun -np <numprocs> ./wireroute -f <input_file> -b <batch_size> [-p <SA_prob>] [-i <SA_iters>]
 ```
 
 **Required flags:**
@@ -80,10 +80,10 @@ This produces the `wireroute` binary in the current directory.
 
 ```bash
 # 4 threads, 10 SA iterations
-./wireroute -f inputs/debug/sample_8_8wires.txt -n 4 -b 1 -i 10
+mpirun -np 4 ./wireroute -f inputs/debug/sample_8_8wires.txt -i 10
 
 # 8 threads, batch size 4
-./wireroute -f inputs/timeinput/medium_wires.txt -n 8 -b 4 -i 5 -p 0.1
+mpirun -np 8 ./wireroute -f inputs/debug/sample_8_8wires.txt -b 4 -i 5 -p 0.1
 ```
 
 Output files are written to `outputs/`:
