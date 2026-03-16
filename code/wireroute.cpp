@@ -6,6 +6,7 @@
 #include "wireroute.h"
 
 #include <algorithm>
+#include <climits>
 #include <cassert>
 #include <chrono>
 #include <cmath>
@@ -320,14 +321,22 @@ int main(int argc, char *argv[]) {
   }
 
   const auto compute_start = std::chrono::steady_clock::now();
-
+  MPI_Bcast(&dim_x, 1, MPI_INT, 0, MPI_COMM_WORLD);
+  MPI_Bcast(&dim_y, 1, MPI_INT, 0, MPI_COMM_WORLD);
+  MPI_Bcast(&num_wires, 1, MPI_INT, 0, MPI_COMM_WORLD);
   /** 
    * (TODO)
    * Implement the wire routing algorithm here
    * Feel free to structure the algorithm into different functions
    * Use MPI to parallelize the algorithm. 
    */
+  int num_batches = num_wires / batch_size;
+  int leftover = num_wires%batch_size;
+  // for(iter = 0; iter < SA_iters; iter++){
+  //   while(){}
+  // }
 
+  printf("batches: %d , leftover: %d , num_wires: %d \n", num_batches, leftover, num_wires);
   if (pid == 0) {
     const double compute_time = std::chrono::duration_cast<std::chrono::duration<double>>(std::chrono::steady_clock::now() - compute_start).count();
     std::cout << "Computation time (sec): " << std::fixed << std::setprecision(10) << compute_time << '\n';
