@@ -84,6 +84,147 @@ void write_output(
   out_wires.close();
 }
 
+int calc_cost(const Wire& wire, std::vector<std::vector<int>>& map, int mode) {
+    int cost = 0;
+
+    auto apply = [&](int x, int y) {
+        if(mode == 0) {
+            cost += (map[y][x]+1) * (map[y][x]+1);
+        } else if(mode == 1) {
+            map[y][x]++;
+            cost += map[y][x] * map[y][x];
+        } else if(mode == 2) {
+            cost += map[y][x] * map[y][x];
+            map[y][x]--;
+        }
+    };
+
+    // Start -> Mid
+    if(wire.move_x_start) {
+        for(int x = std::min(wire.start_x, wire.mid_x); x <= std::max(wire.start_x, wire.mid_x); x++)
+            apply(x, wire.start_y);
+        for(int y = std::min(wire.start_y, wire.mid_y); y <= std::max(wire.start_y, wire.mid_y); y++)
+            apply(wire.mid_x, y);
+        switch(mode){
+        case(0):
+          break;
+        case(1):
+          map[wire.start_y][wire.mid_x]--;
+          break;
+        case(2):
+          map[wire.start_y][wire.mid_x]++;
+          break;
+        }
+    } else {
+        for(int y = std::min(wire.start_y, wire.mid_y); y <= std::max(wire.start_y, wire.mid_y); y++)
+            apply(wire.start_x, y);
+        for(int x = std::min(wire.start_x, wire.mid_x); x <= std::max(wire.start_x, wire.mid_x); x++)
+            apply(x, wire.mid_y);
+        switch(mode){
+        case(0):
+          break;
+        case(1):
+          map[wire.mid_y][wire.start_x]--;
+          break;
+        case(2):
+          map[wire.mid_y][wire.start_x]++;
+          break;
+        }
+    }
+
+    // Mid -> End
+    if(wire.move_x_end) {
+        for(int x = std::min(wire.mid_x, wire.end_x); x <= std::max(wire.mid_x, wire.end_x); x++)
+            apply(x, wire.mid_y);
+        for(int y = std::min(wire.mid_y, wire.end_y); y <= std::max(wire.mid_y, wire.end_y); y++)
+            apply(wire.end_x, y);
+        switch(mode){
+        case(0):
+          break;
+        case(1):
+          map[wire.mid_y][wire.mid_x]--;
+          map[wire.mid_y][wire.end_x]--;
+          break;
+        case(2):
+          map[wire.mid_y][wire.mid_x]++;
+          map[wire.mid_y][wire.end_x]++;
+          break;
+        }
+    } else {
+        for(int y = std::min(wire.mid_y, wire.end_y); y <= std::max(wire.mid_y, wire.end_y); y++)
+            apply(wire.mid_x, y);
+        for(int x = std::min(wire.mid_x, wire.end_x); x <= std::max(wire.mid_x, wire.end_x); x++)
+            apply(x, wire.end_y);
+        switch(mode){
+        case(0):
+          break;
+        case(1):
+          map[wire.mid_y][wire.mid_x]--;
+          map[wire.end_y][wire.mid_x]--;
+          break;
+        case(2):
+          map[wire.mid_y][wire.mid_x]++;
+          map[wire.end_y][wire.mid_x]++;
+          break;
+        }
+    }
+    return cost;
+}
+Wire find_best_route(const Wire& wire, std::vector<std::vector<int>>& occ,
+                    std::mt19937& rng, double SA_prob) {
+    if (wire.start_x == wire.end_x || wire.start_y == wire.end_y)
+        return wire;
+
+    int dx_min = std::min(wire.start_x, wire.end_x);
+    int dx_max = std::max(wire.start_x, wire.end_x);
+    int dy_min = std::min(wire.start_y, wire.end_y);
+    int dy_max = std::max(wire.start_y, wire.end_y);
+    std::uniform_real_distribution<double> prob_dist(0.0, 1.0);
+    if (prob_dist(rng) < SA_prob) {
+    std::uniform_int_distribution<int> x_dist(dx_min, dx_max);
+    std::uniform_int_distribution<int> y_dist(dy_min, dy_max);
+    std::uniform_int_distribution<int> orient_dist(0, 1);
+
+    Wire candidate = wire;
+    candidate.mid_x = x_dist(rng);
+    candidate.mid_y = y_dist(rng);
+    candidate.move_x_start = orient_dist(rng);
+    candidate.move_x_end   = candidate.move_x_start;
+    
+    return candidate;
+    }   
+    int best_cost = INT_MAX;
+    Wire best_wire = wire;
+
+    // current route
+    { int cost = calc_cost(wire, occ, 0); if (cost < best_cost) { best_cost = cost; best_wire = wire; } }
+
+    // x-first
+    for (int x = dx_min+1; x <= dx_max; x++) {
+        Wire c = wire; c.mid_x = x; c.mid_y = wire.end_y;
+        c.move_x_start = true; c.move_x_end = false;
+        int cost = calc_cost(c, occ, 0);
+        if (cost < best_cost) { best_cost = cost; best_wire = c; }
+    }
+    // y-first
+    for (int y = dy_min+1; y <= dy_max; y++) {
+        Wire c = wire; c.mid_x = wire.end_x; c.mid_y = y;
+        c.move_x_start = false; c.move_x_end = true;
+        int cost = calc_cost(c, occ, 0);
+        if (cost < best_cost) { best_cost = cost; best_wire = c; }
+    }
+    // 3-bend
+    for (int x = dx_min+1; x < dx_max; x++) {
+        for (int y = dy_min+1; y < dy_max; y++) {
+            { Wire c = wire; c.mid_x=x; c.mid_y=y; c.move_x_start=true;  c.move_x_end=true;
+              int cost = calc_cost(c,occ,0); if(cost<best_cost){best_cost=cost;best_wire=c;} }
+            { Wire c = wire; c.mid_x=x; c.mid_y=y; c.move_x_start=false; c.move_x_end=false;
+              int cost = calc_cost(c,occ,0); if(cost<best_cost){best_cost=cost;best_wire=c;} }
+        }
+    }
+    return best_wire;
+}
+
 
 int main(int argc, char *argv[]) {
   const auto init_start = std::chrono::steady_clock::now();
@@ -162,10 +303,12 @@ int main(int argc, char *argv[]) {
       fin >> dim_x >> dim_y >> num_wires;
 
       wires.resize(num_wires);
-      for (auto& wire : wires) {
+      for (auto &wire : wires) {
         fin >> wire.start_x >> wire.start_y >> wire.end_x >> wire.end_y;
-        wire.bend1_x = wire.start_x;
-        wire.bend1_y = wire.start_y;
+        wire.move_x_start = true;
+        wire.move_x_end = false;
+        wire.mid_x = wire.end_x;
+        wire.mid_y = wire.start_y;
       }
   }
 
@@ -193,13 +336,12 @@ int main(int argc, char *argv[]) {
   if (pid == 0) {
     /* Write wires and occupancy matrix to files */
     print_stats(occupancy);
-    write_output(wires, num_wires, occupancy, dim_x, dim_y, nproc, input_filename);
+    write_output(wires, num_wires, occupancy, dim_x, dim_y);
   }
 
   // Cleanup
   MPI_Finalize();
 }
-
 
 /* TODO (student): implement to_validate_format to convert Wire to
   validate_wire_t keypoint representation in order to run checker and
@@ -207,6 +349,56 @@ int main(int argc, char *argv[]) {
 */
 validate_wire_t Wire::to_validate_format(void) const {
   validate_wire_t w;
-  
+  w.num_pts = 1;
+  w.p[0].x = this -> start_x;
+  w.p[0].y = this -> start_y;
+  if(this->move_x_start){
+    if(this->start_x != this->mid_x){
+      w.p[w.num_pts].x = this->mid_x;
+      w.p[w.num_pts].y = this->start_y;
+      w.num_pts++;
+    }
+    if(this->start_y != this->mid_y){
+      w.p[w.num_pts].x = this -> mid_x;
+      w.p[w.num_pts].y = this -> mid_y; 
+      w.num_pts++;
+    }
+  }
+  else{
+    if(this->start_y != this->mid_y){
+      w.p[w.num_pts].x = this -> start_x;
+      w.p[w.num_pts].y = this -> mid_y; 
+      w.num_pts++;
+    }
+    if(this->start_x != this->mid_x){
+      w.p[w.num_pts].x = this->mid_x;
+      w.p[w.num_pts].y = this->mid_y;
+      w.num_pts++;
+    }
+  }
+  if(this->move_x_end){
+    if(this->mid_x != this->end_x){
+      w.p[w.num_pts].x = this->end_x;
+      w.p[w.num_pts].y = this->mid_y;
+      w.num_pts++;
+    }
+    if(this->mid_y != this->end_y){
+      w.p[w.num_pts].x = this -> end_x;
+      w.p[w.num_pts].y = this -> end_y; 
+      w.num_pts++;
+    }
+  }
+  else{
+    if(this->mid_y != this->end_y){
+      w.p[w.num_pts].x = this -> mid_x;
+      w.p[w.num_pts].y = this -> end_y; 
+      w.num_pts++;
+    }
+    if(this->mid_x != this->end_x){
+      w.p[w.num_pts].x = this->end_x;
+      w.p[w.num_pts].y = this->end_y;
+      w.num_pts++;
+    }
+  }
   return w;
 }
