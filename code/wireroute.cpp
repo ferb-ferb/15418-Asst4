@@ -226,6 +226,9 @@ Wire find_best_route(const Wire& wire, std::vector<std::vector<int>>& occ,
     return best_wire;
 }
 
+int route_batch(int pid, std::vector<Wire> wires, int offset, int end, int* my_send_buf){
+  return 69+ pid;
+}
 
 int main(int argc, char *argv[]) {
   const auto init_start = std::chrono::steady_clock::now();
@@ -314,35 +317,53 @@ int main(int argc, char *argv[]) {
   }
 
   /* Initialize any additional data structures needed in the algorithm */
+  std::vector<int> data_counts(nproc); 
+  std::vector<int> message_offsets(nproc);
+  std::vector<int> my_send_buf(batch_size * 5);
+  std::vector<int> all_changes(batch_size * nproc * 5);
 
   if (pid == 0) {
     const double init_time = std::chrono::duration_cast<std::chrono::duration<double>>(std::chrono::steady_clock::now() - init_start).count();
     std::cout << "Initialization time (sec): " << std::fixed << std::setprecision(10) << init_time << '\n';
   }
 
-  const auto compute_start = std::chrono::steady_clock::now();
   MPI_Bcast(&dim_x, 1, MPI_INT, 0, MPI_COMM_WORLD);
   MPI_Bcast(&dim_y, 1, MPI_INT, 0, MPI_COMM_WORLD);
   MPI_Bcast(&num_wires, 1, MPI_INT, 0, MPI_COMM_WORLD);
-  /** 
-   * (TODO)
-   * Implement the wire routing algorithm here
-   * Feel free to structure the algorithm into different functions
-   * Use MPI to parallelize the algorithm. 
-   */
+  if(pid != 0){
+    wires.resize(num_wires);
+  }
+  MPI_Bcast(wires.data(), num_wires * sizeof(Wire), MPI_BYTE, 0, MPI_COMM_WORLD);
   int num_batches = num_wires / batch_size;
   int leftover = num_wires%batch_size;
-  // for(iter = 0; iter < SA_iters; iter++){
-  //   while(){}
-  // }
 
   printf("batches: %d , leftover: %d , num_wires: %d \n", num_batches, leftover, num_wires);
+  const auto compute_start = std::chrono::steady_clock::now();
+
+  for(int iter = 0; iter < SA_iters; iter++){
+    for(int chunk = 0; chunk <= num_batches/nproc; chunk++ ){
+      int offset = (chunk * (batch_size * nproc)) + (batch_size * pid);
+      if(offset == 0 && pid == 0){
+        data_counts[pid] = route_batch(pid, wires , offset, offset + batch_size + leftover, my_send_buf.data());
+      }
+      else{
+        data_counts[pid] = route_batch(pid, wires,offset, offset + batch_size, my_send_buf.data());
+      }
+      //MPI.Bcast();
+      MPI_Allgather(MPI_IN_PLACE, 1, MPI_INT, data_counts.data(), 1, MPI_INT, MPI_COMM_WORLD);
+      if(pid == 0 && chunk == 0){
+        for(int i = 0; i < nproc; i++){
+          printf("data_counts[%d]: %d\n", i, data_counts[i]);
+        }
+      }
+    }
+  }
+
   if (pid == 0) {
     const double compute_time = std::chrono::duration_cast<std::chrono::duration<double>>(std::chrono::steady_clock::now() - compute_start).count();
     std::cout << "Computation time (sec): " << std::fixed << std::setprecision(10) << compute_time << '\n';
   }
-
-  if (pid == 0) {
+if (pid == 0) {
     /* Write wires and occupancy matrix to files */
     print_stats(occupancy);
     write_output(wires, num_wires, occupancy, dim_x, dim_y);
