@@ -384,9 +384,6 @@ int main(int argc, char *argv[]) {
     }
   }
 
-  /* Initialize any additional data structures needed in the algorithm */
-  std::vector<int> data_counts(nproc);
-  std::vector<int> message_offsets(nproc);
   std::random_device rd;
   std::mt19937 g(418);
   std::mt19937 rng(rd() ^ pid);
@@ -457,15 +454,25 @@ int main(int argc, char *argv[]) {
     round++;
   }
   // --- LOAD BALANCING FIX END ---
-  int my_max_wires = (pid == 0) ? (batch_size + leftover) : batch_size;
-  std::vector<int> my_send_buf(my_max_wires * 5);
-  std::vector<int> all_changes((batch_size * nproc + leftover) * 5);
+
+  // --- SINGLE GATHER ALLOCATION ---
+  // The absolute maximum number of wires a processor will ever route in a batch
+  int max_wires_per_proc = batch_size + leftover;
+  int MAX_INTS_PER_PROC = max_wires_per_proc * 5;
+
+  std::vector<int> my_fixed_send_buf(MAX_INTS_PER_PROC, -1);
+  std::vector<int> all_fixed_recv_buf(nproc * MAX_INTS_PER_PROC, -1);
+  // --------------------------------
+
   occupancy.assign(dim_y, std::vector<int>(dim_x, 0));
   for (int i = 0; i < num_wires; i++) {
     calc_cost(wires[i], occupancy, 1);
   }
-  printf("batches: %d , leftover: %d , num_wires: %d \n", num_batches, leftover,
-         num_wires);
+
+  if (pid == 0) {
+    printf("batches: %d , leftover: %d , num_wires: %d \n", num_batches,
+           leftover, num_wires);
+  }
   const auto compute_start = std::chrono::steady_clock::now();
 
   double comp_time = 0.0;
@@ -475,50 +482,58 @@ int main(int argc, char *argv[]) {
       int offset = (chunk * (batch_size * nproc)) + (batch_size * pid);
       int end = offset + batch_size;
       double start_comp = MPI_Wtime();
-      if (offset >= num_wires) {
-        data_counts[pid] = 0;
-      } else {
+
+      int my_send_count = 0;
+      if (offset < num_wires) {
         if (pid == 0 && (offset + batch_size) >= (num_batches * batch_size)) {
           end += leftover;
         }
-        end = std::min(end, num_wires); // ADDED SAFEGUARD
-        data_counts[pid] =
-            route_batch(pid, wires, offset, end, my_send_buf.data(), rng,
+        end = std::min(end, num_wires);
+        my_send_count =
+            route_batch(pid, wires, offset, end, my_fixed_send_buf.data(), rng,
                         occupancy, SA_prob);
-        // MPI.Bcast();
       }
       comp_time += (MPI_Wtime() - start_comp);
-      double start_comm = MPI_Wtime();
-      MPI_Allgather(MPI_IN_PLACE, 1, MPI_INT, data_counts.data(), 1, MPI_INT,
-                    MPI_COMM_WORLD);
-      // if(pid == 0 && chunk == 0){
-      //   for(int i = 0; i < nproc; i++){
-      //     printf("data_counts[%d]: %d\n", i, data_counts[i]);
-      //   }
-      // }
-      message_offsets[0] = 0;
-      for (int i = 1; i < nproc; i++) {
-        message_offsets[i] = message_offsets[i - 1] + data_counts[i - 1];
+
+      // --- SINGLE GATHER PAD ---
+      // Fill the unused portion of the fixed buffer with our sentinel value
+      // (-1)
+      for (int i = my_send_count; i < MAX_INTS_PER_PROC; i++) {
+        my_fixed_send_buf[i] = -1;
       }
-      MPI_Allgatherv(my_send_buf.data(), data_counts[pid], MPI_INT,
-                     all_changes.data(), data_counts.data(),
-                     message_offsets.data(), MPI_INT, MPI_COMM_WORLD);
+
+      double start_comm = MPI_Wtime();
+      // Look at this beautiful, clean, single collective call
+      MPI_Allgather(my_fixed_send_buf.data(), MAX_INTS_PER_PROC, MPI_INT,
+                    all_fixed_recv_buf.data(), MAX_INTS_PER_PROC, MPI_INT,
+                    MPI_COMM_WORLD);
       comm_time += (MPI_Wtime() - start_comm);
-      int total_recv = message_offsets[nproc - 1] + data_counts[nproc - 1];
-      for (int i = 0; i < total_recv; i += 5) {
-        int wire_idx = all_changes[i];
-        if (wire_idx >= offset && wire_idx < end) {
-          continue;
+
+      // --- UNPACK CHANGES ---
+      for (int p = 0; p < nproc; p++) {
+        if (p == pid)
+          continue; // Skip ourselves! We already applied our own local changes
+
+        int recv_offset = p * MAX_INTS_PER_PROC;
+        for (int i = 0; i < MAX_INTS_PER_PROC; i += 5) {
+          int wire_idx = all_fixed_recv_buf[recv_offset + i];
+
+          if (wire_idx == -1) {
+            break; // We hit the padding. This processor has no more changes.
+          }
+
+          calc_cost(wires[wire_idx], occupancy, 2);
+          wires[wire_idx].move_x_start =
+              all_fixed_recv_buf[recv_offset + i + 1];
+          wires[wire_idx].move_x_end = all_fixed_recv_buf[recv_offset + i + 2];
+          wires[wire_idx].mid_x = all_fixed_recv_buf[recv_offset + i + 3];
+          wires[wire_idx].mid_y = all_fixed_recv_buf[recv_offset + i + 4];
+          calc_cost(wires[wire_idx], occupancy, 1);
         }
-        calc_cost(wires[wire_idx], occupancy, 2);
-        wires[wire_idx].move_x_start = all_changes[i + 1];
-        wires[wire_idx].move_x_end = all_changes[i + 2];
-        wires[wire_idx].mid_x = all_changes[i + 3];
-        wires[wire_idx].mid_y = all_changes[i + 4];
-        calc_cost(wires[wire_idx], occupancy, 1);
       }
     }
   }
+
   if (pid == 0) {
     std::cout << "Compute Time: " << comp_time << "s\n";
     std::cout << "MPI Comm Time: " << comm_time << "s\n";
