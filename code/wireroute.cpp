@@ -407,9 +407,56 @@ int main(int argc, char *argv[]) {
   }
   MPI_Bcast(wires.data(), num_wires * sizeof(Wire), MPI_BYTE, 0,
             MPI_COMM_WORLD);
-  std::shuffle(wires.begin(), wires.end(), g);
+
+  // --- LOAD BALANCING FIX START ---
   int num_batches = num_wires / batch_size;
   int leftover = num_wires % batch_size;
+
+  std::vector<Wire> sorted_wires = wires;
+  // 1. Sort wires descending by Manhattan distance (Longest first)
+  std::sort(sorted_wires.begin(), sorted_wires.end(),
+            [](const Wire &a, const Wire &b) {
+              int dist_a =
+                  std::abs(a.start_x - a.end_x) + std::abs(a.start_y - a.end_y);
+              int dist_b =
+                  std::abs(b.start_x - b.end_x) + std::abs(b.start_y - b.end_y);
+              return dist_a > dist_b;
+            });
+
+  // 2. Simulate your chunking loop to figure out which indices belong to which
+  // process
+  std::vector<std::vector<int>> proc_indices(nproc);
+  for (int chunk = 0; chunk <= num_batches / nproc; chunk++) {
+    for (int p = 0; p < nproc; p++) {
+      int offset = (chunk * (batch_size * nproc)) + (batch_size * p);
+      int end = offset + batch_size;
+      if (offset >= num_wires)
+        continue;
+
+      if (p == 0 && (offset + batch_size) >= (num_batches * batch_size)) {
+        end += leftover;
+      }
+      end = std::min(end, num_wires); // SAFEGUARD: Prevent out of bounds!
+
+      for (int i = offset; i < end; i++) {
+        proc_indices[p].push_back(i);
+      }
+    }
+  }
+
+  // 3. Deal the sorted wires round-robin directly into those assigned indices
+  int current_wire = 0;
+  int round = 0;
+  while (current_wire < num_wires) {
+    for (int p = 0; p < nproc && current_wire < num_wires; p++) {
+      if (round < proc_indices[p].size()) {
+        int target_index = proc_indices[p][round];
+        wires[target_index] = sorted_wires[current_wire++];
+      }
+    }
+    round++;
+  }
+  // --- LOAD BALANCING FIX END ---
   int my_max_wires = (pid == 0) ? (batch_size + leftover) : batch_size;
   std::vector<int> my_send_buf(my_max_wires * 5);
   std::vector<int> all_changes((batch_size * nproc + leftover) * 5);
@@ -431,6 +478,7 @@ int main(int argc, char *argv[]) {
         if (pid == 0 && (offset + batch_size) >= (num_batches * batch_size)) {
           end += leftover;
         }
+        end = std::min(end, num_wires); // ADDED SAFEGUARD
         data_counts[pid] =
             route_batch(pid, wires, offset, end, my_send_buf.data(), rng,
                         occupancy, SA_prob);
