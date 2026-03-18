@@ -468,10 +468,13 @@ int main(int argc, char *argv[]) {
          num_wires);
   const auto compute_start = std::chrono::steady_clock::now();
 
+  double comp_time = 0.0;
+  double comm_time = 0.0;
   for (int iter = 0; iter < SA_iters; iter++) {
     for (int chunk = 0; chunk <= num_batches / nproc; chunk++) {
       int offset = (chunk * (batch_size * nproc)) + (batch_size * pid);
       int end = offset + batch_size;
+      double start_comp = MPI_Wtime();
       if (offset >= num_wires) {
         data_counts[pid] = 0;
       } else {
@@ -484,6 +487,8 @@ int main(int argc, char *argv[]) {
                         occupancy, SA_prob);
         // MPI.Bcast();
       }
+      comp_time += (MPI_Wtime() - start_comp);
+      double start_comm = MPI_Wtime();
       MPI_Allgather(MPI_IN_PLACE, 1, MPI_INT, data_counts.data(), 1, MPI_INT,
                     MPI_COMM_WORLD);
       // if(pid == 0 && chunk == 0){
@@ -498,6 +503,7 @@ int main(int argc, char *argv[]) {
       MPI_Allgatherv(my_send_buf.data(), data_counts[pid], MPI_INT,
                      all_changes.data(), data_counts.data(),
                      message_offsets.data(), MPI_INT, MPI_COMM_WORLD);
+      comm_time += (MPI_Wtime() - start_comm);
       int total_recv = message_offsets[nproc - 1] + data_counts[nproc - 1];
       for (int i = 0; i < total_recv; i += 5) {
         int wire_idx = all_changes[i];
@@ -513,7 +519,10 @@ int main(int argc, char *argv[]) {
       }
     }
   }
-
+  if (pid == 0) {
+    std::cout << "Compute Time: " << comp_time << "s\n";
+    std::cout << "MPI Comm Time: " << comm_time << "s\n";
+  }
   if (pid == 0) {
     const double compute_time =
         std::chrono::duration_cast<std::chrono::duration<double>>(
