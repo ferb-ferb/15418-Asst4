@@ -9,21 +9,22 @@
 #include <cstdint>
 #include <vector>
 
-#define MAX_PTS_PER_WIRE 4
+#define MAX_PTS_PER_WIRE 5
 #define COST_REPORT_DEPTH 10
 
 /** README(student):
  We provide a way to validate consistency between wire layout
- and occupancy. Within the program, a wire checker is provided 
+ and occupancy. Within the program, a wire checker is provided
  by:
  wr_checker Checker(wires, occupancy);
  and its validate() method can be called to validate the consistency.
- 
+
  The struct below is the standard format for wires used by the wire checker.
  It contains a buffer that holds up to MAX_PTS_PER_WIRE points, and a num_pts
- field that specifies the number of points. Regardless of what representation you use for your wires, you should
- implement the Wire::to_validate_format method to convert your Wire
- to a validate_wire_t if you wish to use the checker.
+ field that specifies the number of points. Regardless of what representation
+ you use for your wires, you should implement the Wire::to_validate_format
+ method to convert your Wire to a validate_wire_t if you wish to use the
+ checker.
 */
 
 /* validate_wire_t is a format to represent wires by key points
@@ -63,6 +64,10 @@ struct Wire {
   int start_x, start_y, end_x, end_y, mid_x, mid_y;
   bool move_x_start, move_x_end;
   validate_wire_t to_validate_format(void) const;
+  bool operator!=(const Wire &other) const {
+    return mid_x != other.mid_x || mid_y != other.mid_y ||
+           move_x_start != other.move_x_start || move_x_end != other.move_x_end;
+  }
 };
 
 // Definition of the wire checker
