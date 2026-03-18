@@ -388,6 +388,7 @@ int main(int argc, char *argv[]) {
   std::vector<int> data_counts(nproc);
   std::vector<int> message_offsets(nproc);
   std::random_device rd;
+  std::mt19937 g(418);
   std::mt19937 rng(rd() ^ pid);
   if (pid == 0) {
     const double init_time =
@@ -406,6 +407,7 @@ int main(int argc, char *argv[]) {
   }
   MPI_Bcast(wires.data(), num_wires * sizeof(Wire), MPI_BYTE, 0,
             MPI_COMM_WORLD);
+  std::shuffle(wires.begin(), wires.end(), g);
   int num_batches = num_wires / batch_size;
   int leftover = num_wires % batch_size;
   int my_max_wires = (pid == 0) ? (batch_size + leftover) : batch_size;
