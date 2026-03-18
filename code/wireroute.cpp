@@ -35,11 +35,6 @@ void print_stats(const std::vector<std::vector<int>> &occupancy) {
   std::cout << "Total cost: " << total_cost << '\n';
 }
 
-/* This function write the output into 2 files
-(1) It write occupancy grids into a file
-(2) It convert wires from Wire to validate_wire_t by to_validate_format
-(2) It write wires into another file
-*/
 void write_output(
     const std::vector<Wire> &wires, const int num_wires,
     const std::vector<std::vector<int>> &occupancy, const int dim_x,
@@ -71,8 +66,6 @@ void write_output(
   out_wires << num_wires << '\n';
 
   for (const auto &wire : wires) {
-    // NOTICE: we convert to keypoint representation here, using
-    // to_validate_format which need to be defined in the bottom of this file
     validate_wire_t keypoints = wire.to_validate_format();
     for (int i = 0; i < keypoints.num_pts; ++i) {
       out_wires << keypoints.p[i].x << ' ' << keypoints.p[i].y;
@@ -179,6 +172,7 @@ int calc_cost(const Wire &wire, std::vector<std::vector<int>> &map, int mode) {
   }
   return cost;
 }
+
 Wire find_best_route(const Wire &wire, std::vector<std::vector<int>> &occ,
                      std::mt19937 &rng, double SA_prob) {
   if (wire.start_x == wire.end_x || wire.start_y == wire.end_y)
@@ -188,6 +182,7 @@ Wire find_best_route(const Wire &wire, std::vector<std::vector<int>> &occ,
   int dx_max = std::max(wire.start_x, wire.end_x);
   int dy_min = std::min(wire.start_y, wire.end_y);
   int dy_max = std::max(wire.start_y, wire.end_y);
+
   std::uniform_real_distribution<double> prob_dist(0.0, 1.0);
   if (prob_dist(rng) < SA_prob) {
     std::uniform_int_distribution<int> x_dist(dx_min, dx_max);
@@ -202,6 +197,7 @@ Wire find_best_route(const Wire &wire, std::vector<std::vector<int>> &occ,
 
     return candidate;
   }
+
   int best_cost = INT_MAX;
   Wire best_wire = wire;
 
@@ -227,6 +223,7 @@ Wire find_best_route(const Wire &wire, std::vector<std::vector<int>> &occ,
       best_wire = c;
     }
   }
+
   // y-first
   for (int y = dy_min + 1; y <= dy_max; y++) {
     Wire c = wire;
@@ -240,6 +237,7 @@ Wire find_best_route(const Wire &wire, std::vector<std::vector<int>> &occ,
       best_wire = c;
     }
   }
+
   // 3-bend
   for (int x = dx_min + 1; x < dx_max; x++) {
     for (int y = dy_min + 1; y < dy_max; y++) {
@@ -277,7 +275,7 @@ int route_batch(int pid, std::vector<Wire> &wires, int offset, int end,
                 std::vector<std::vector<int>> &occ, double SA_prob) {
   int my_send_count = 0;
   for (int i = offset; i < end; i++) {
-    int curr_cost = calc_cost(wires[i], occ, 2);
+    calc_cost(wires[i], occ, 2);
     Wire best = find_best_route(wires[i], occ, rng, SA_prob);
     if (best != wires[i]) {
       my_send_buf[my_send_count] = i;
@@ -298,11 +296,8 @@ int main(int argc, char *argv[]) {
   int pid;
   int nproc;
 
-  // Initialize MPI
   MPI_Init(&argc, &argv);
-  // Get process rank
   MPI_Comm_rank(MPI_COMM_WORLD, &pid);
-  // Get total number of processes
   MPI_Comm_size(MPI_COMM_WORLD, &nproc);
 
   std::string input_filename;
@@ -310,7 +305,6 @@ int main(int argc, char *argv[]) {
   int SA_iters = 5;
   int batch_size = 1;
 
-  // Read command line arguments
   int opt;
   while ((opt = getopt(argc, argv, "f:p:i:m:b:")) != -1) {
     switch (opt) {
@@ -332,20 +326,17 @@ int main(int argc, char *argv[]) {
             << "Usage: " << argv[0]
             << " -f input_filename [-p SA_prob] [-i SA_iters] -b batch_size\n";
       }
-
       MPI_Finalize();
       exit(EXIT_FAILURE);
     }
   }
 
-  // Check if required options are provided
   if (empty(input_filename) || SA_iters <= 0 || batch_size <= 0) {
     if (pid == 0) {
       std::cerr
           << "Usage: " << argv[0]
           << " -f input_filename [-p SA_prob] [-i SA_iters] -b batch_size\n";
     }
-
     MPI_Finalize();
     exit(EXIT_FAILURE);
   }
@@ -365,15 +356,11 @@ int main(int argc, char *argv[]) {
 
   if (pid == 0) {
     std::ifstream fin(input_filename);
-
     if (!fin) {
       std::cerr << "Unable to open file: " << input_filename << ".\n";
       exit(EXIT_FAILURE);
     }
-
-    /* Read the grid dimension and wire information from file */
     fin >> dim_x >> dim_y >> num_wires;
-
     wires.resize(num_wires);
     for (auto &wire : wires) {
       fin >> wire.start_x >> wire.start_y >> wire.end_x >> wire.end_y;
@@ -384,12 +371,9 @@ int main(int argc, char *argv[]) {
     }
   }
 
-  /* Initialize any additional data structures needed in the algorithm */
-  std::vector<int> data_counts(nproc);
-  std::vector<int> message_offsets(nproc);
   std::random_device rd;
-  std::mt19937 g(418);
   std::mt19937 rng(rd() ^ pid);
+
   if (pid == 0) {
     const double init_time =
         std::chrono::duration_cast<std::chrono::duration<double>>(
@@ -408,12 +392,11 @@ int main(int argc, char *argv[]) {
   MPI_Bcast(wires.data(), num_wires * sizeof(Wire), MPI_BYTE, 0,
             MPI_COMM_WORLD);
 
-  // --- LOAD BALANCING FIX START ---
+  // --- LOAD BALANCING ---
   int num_batches = num_wires / batch_size;
   int leftover = num_wires % batch_size;
 
   std::vector<Wire> sorted_wires = wires;
-  // 1. Sort wires descending by Manhattan distance (Longest first)
   std::sort(sorted_wires.begin(), sorted_wires.end(),
             [](const Wire &a, const Wire &b) {
               int dist_a =
@@ -423,8 +406,6 @@ int main(int argc, char *argv[]) {
               return dist_a > dist_b;
             });
 
-  // 2. Simulate your chunking loop to figure out which indices belong to which
-  // process
   std::vector<std::vector<int>> proc_indices(nproc);
   for (int chunk = 0; chunk <= num_batches / nproc; chunk++) {
     for (int p = 0; p < nproc; p++) {
@@ -432,124 +413,108 @@ int main(int argc, char *argv[]) {
       int end = offset + batch_size;
       if (offset >= num_wires)
         continue;
-
-      if (p == 0 && (offset + batch_size) >= (num_batches * batch_size)) {
+      if (p == 0 && (offset + batch_size) >= (num_batches * batch_size))
         end += leftover;
-      }
-      end = std::min(end, num_wires); // SAFEGUARD: Prevent out of bounds!
-
-      for (int i = offset; i < end; i++) {
+      end = std::min(end, num_wires);
+      for (int i = offset; i < end; i++)
         proc_indices[p].push_back(i);
-      }
     }
   }
 
-  // 3. Deal the sorted wires round-robin directly into those assigned indices
   int current_wire = 0;
   int round = 0;
   while (current_wire < num_wires) {
     for (int p = 0; p < nproc && current_wire < num_wires; p++) {
-      if (round < proc_indices[p].size()) {
-        int target_index = proc_indices[p][round];
-        wires[target_index] = sorted_wires[current_wire++];
+      if (round < (int)proc_indices[p].size()) {
+        wires[proc_indices[p][round]] = sorted_wires[current_wire++];
       }
     }
     round++;
   }
-  // --- LOAD BALANCING FIX END ---
-  int my_max_wires = (pid == 0) ? (batch_size + leftover) : batch_size;
-  std::vector<int> my_send_buf(my_max_wires * 5);
-  std::vector<int> all_changes((batch_size * nproc + leftover) * 5);
-  occupancy.assign(dim_y, std::vector<int>(dim_x, 0));
-  for (int i = 0; i < num_wires; i++) {
-    calc_cost(wires[i], occupancy, 1);
-  }
-  printf("batches: %d , leftover: %d , num_wires: %d \n", num_batches, leftover,
-         num_wires);
-  const auto compute_start = std::chrono::steady_clock::now();
+  // --- END LOAD BALANCING ---
 
+  // Fixed-size message buffers: one Allgather per chunk instead of two
+  int fixed_msg_size = (batch_size + leftover) * 5;
+  std::vector<int> my_send_buf(fixed_msg_size, -1);
+  std::vector<int> all_changes(fixed_msg_size * nproc);
+
+  occupancy.assign(dim_y, std::vector<int>(dim_x, 0));
+  for (int i = 0; i < num_wires; i++)
+    calc_cost(wires[i], occupancy, 1);
+
+  const auto compute_start = std::chrono::steady_clock::now();
   double comp_time = 0.0;
   double comm_time = 0.0;
+
   for (int iter = 0; iter < SA_iters; iter++) {
     for (int chunk = 0; chunk <= num_batches / nproc; chunk++) {
       int offset = (chunk * (batch_size * nproc)) + (batch_size * pid);
       int end = offset + batch_size;
+
+      // Always reset buffer BEFORE the if — prevents stale data on idle chunks
+      for (int k = 0; k < fixed_msg_size; k++)
+        my_send_buf[k] = -1;
+
       double start_comp = MPI_Wtime();
-      if (offset >= num_wires) {
-        data_counts[pid] = 0;
-      } else {
-        if (pid == 0 && (offset + batch_size) >= (num_batches * batch_size)) {
+      if (offset < num_wires) {
+        if (pid == 0 && (offset + batch_size) >= (num_batches * batch_size))
           end += leftover;
-        }
-        end = std::min(end, num_wires); // ADDED SAFEGUARD
-        data_counts[pid] =
-            route_batch(pid, wires, offset, end, my_send_buf.data(), rng,
-                        occupancy, SA_prob);
-        // MPI.Bcast();
+        end = std::min(end, num_wires);
+        route_batch(pid, wires, offset, end, my_send_buf.data(), rng, occupancy,
+                    SA_prob);
       }
       comp_time += (MPI_Wtime() - start_comp);
+
       double start_comm = MPI_Wtime();
-      MPI_Allgather(MPI_IN_PLACE, 1, MPI_INT, data_counts.data(), 1, MPI_INT,
+      MPI_Allgather(my_send_buf.data(), fixed_msg_size, MPI_INT,
+                    all_changes.data(), fixed_msg_size, MPI_INT,
                     MPI_COMM_WORLD);
-      // if(pid == 0 && chunk == 0){
-      //   for(int i = 0; i < nproc; i++){
-      //     printf("data_counts[%d]: %d\n", i, data_counts[i]);
-      //   }
-      // }
-      message_offsets[0] = 0;
-      for (int i = 1; i < nproc; i++) {
-        message_offsets[i] = message_offsets[i - 1] + data_counts[i - 1];
-      }
-      MPI_Allgatherv(my_send_buf.data(), data_counts[pid], MPI_INT,
-                     all_changes.data(), data_counts.data(),
-                     message_offsets.data(), MPI_INT, MPI_COMM_WORLD);
       comm_time += (MPI_Wtime() - start_comm);
-      int total_recv = message_offsets[nproc - 1] + data_counts[nproc - 1];
-      for (int i = 0; i < total_recv; i += 5) {
-        int wire_idx = all_changes[i];
-        if (wire_idx >= offset && wire_idx < end) {
-          continue;
+
+      // Apply updates from all other processors
+      for (int p = 0; p < nproc; p++) {
+        int base = p * fixed_msg_size;
+        for (int j = 0; j < fixed_msg_size; j += 5) {
+          int wire_idx = all_changes[base + j];
+          if (wire_idx == -1)
+            break; // sentinel: done
+          if (wire_idx >= offset && wire_idx < end)
+            continue; // skip our own
+          calc_cost(wires[wire_idx], occupancy, 2);
+          wires[wire_idx].move_x_start = all_changes[base + j + 1];
+          wires[wire_idx].move_x_end = all_changes[base + j + 2];
+          wires[wire_idx].mid_x = all_changes[base + j + 3];
+          wires[wire_idx].mid_y = all_changes[base + j + 4];
+          calc_cost(wires[wire_idx], occupancy, 1);
         }
-        calc_cost(wires[wire_idx], occupancy, 2);
-        wires[wire_idx].move_x_start = all_changes[i + 1];
-        wires[wire_idx].move_x_end = all_changes[i + 2];
-        wires[wire_idx].mid_x = all_changes[i + 3];
-        wires[wire_idx].mid_y = all_changes[i + 4];
-        calc_cost(wires[wire_idx], occupancy, 1);
       }
     }
   }
+
   if (pid == 0) {
     std::cout << "Compute Time: " << comp_time << "s\n";
     std::cout << "MPI Comm Time: " << comm_time << "s\n";
-  }
-  if (pid == 0) {
+
     const double compute_time =
         std::chrono::duration_cast<std::chrono::duration<double>>(
             std::chrono::steady_clock::now() - compute_start)
             .count();
     std::cout << "Computation time (sec): " << std::fixed
               << std::setprecision(10) << compute_time << '\n';
-  }
-  if (pid == 0) {
-    /* Write wires and occupancy matrix to files */
+
     print_stats(occupancy);
     write_output(wires, num_wires, occupancy, dim_x, dim_y);
   }
 
-  // Cleanup
   MPI_Finalize();
 }
 
-/* TODO (student): implement to_validate_format to convert Wire to
-  validate_wire_t keypoint representation in order to run checker and
-  write output
-*/
 validate_wire_t Wire::to_validate_format(void) const {
   validate_wire_t w;
   w.num_pts = 1;
   w.p[0].x = this->start_x;
   w.p[0].y = this->start_y;
+
   if (this->move_x_start) {
     if (this->start_x != this->mid_x) {
       w.p[w.num_pts].x = this->mid_x;
@@ -573,6 +538,7 @@ validate_wire_t Wire::to_validate_format(void) const {
       w.num_pts++;
     }
   }
+
   if (this->move_x_end) {
     if (this->mid_x != this->end_x) {
       w.p[w.num_pts].x = this->end_x;
