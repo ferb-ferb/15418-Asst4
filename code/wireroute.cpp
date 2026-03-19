@@ -214,7 +214,89 @@ Wire find_best_route(const Wire &wire, std::vector<std::vector<int>> &occ,
     }
   }
 
+  // #pragma omp parallel
+  //   {
+  //     int local_best_cost = best_cost;
+  //     Wire local_best_wire = best_wire;
+  // // x-first
+  // #pragma omp for nowait schedule(static)
+  //     for (int x = dx_min + 1; x <= dx_max; x++) {
+  //       Wire candidate = wire;
+  //       candidate.mid_x = x;
+  //       candidate.mid_y = wire.end_y;
+  //       candidate.move_x_start = true;
+  //       candidate.move_x_end = false;
+  //
+  //       int cost = calc_cost(candidate, occ, 0);
+  //       if (cost < local_best_cost) {
+  //         local_best_cost = cost;
+  //         local_best_wire = candidate;
+  //       }
+  //     }
+  //
+  // // y-first
+  // #pragma omp for nowait schedule(static)
+  //     for (int y = dy_min + 1; y <= dy_max; y++) {
+  //       Wire candidate = wire;
+  //       candidate.mid_x = wire.end_x;
+  //       candidate.mid_y = y;
+  //       candidate.move_x_start = false;
+  //       candidate.move_x_end = true;
+  //
+  //       int cost = calc_cost(candidate, occ, 0);
+  //       if (cost < local_best_cost) {
+  //         local_best_cost = cost;
+  //         local_best_wire = candidate;
+  //       }
+  //     }
+  //
+  // // 3 bend
+  // #pragma omp for nowait schedule(static) collapse(2)
+  //     for (int x = dx_min + 1; x < dx_max; x++) {
+  //       for (int y = dy_min + 1; y < dy_max; y++) {
+  //
+  //         // x-first
+  //         {
+  //           Wire candidate = wire;
+  //           candidate.mid_x = x;
+  //           candidate.mid_y = y;
+  //           candidate.move_x_start = true;
+  //           candidate.move_x_end = true;
+  //
+  //           int cost = calc_cost(candidate, occ, 0);
+  //           if (cost < local_best_cost) {
+  //             local_best_cost = cost;
+  //             local_best_wire = candidate;
+  //           }
+  //         }
+  //
+  //         // y-first
+  //         {
+  //           Wire candidate = wire;
+  //           candidate.mid_x = x;
+  //           candidate.mid_y = y;
+  //           candidate.move_x_start = false;
+  //           candidate.move_x_end = false;
+  //
+  //           int cost = calc_cost(candidate, occ, 0);
+  //           if (cost < local_best_cost) {
+  //             local_best_cost = cost;
+  //             local_best_wire = candidate;
+  //           }
+  //         }
+  //       }
+  //     }
+  // #pragma omp critical
+  //     {
+  //       if (local_best_cost < best_cost) {
+  //         best_cost = local_best_cost;
+  //         best_wire = local_best_wire;
+  //       }
+  //     }
+  //   }
   // x-first
+  int local_best_cost = best_cost;
+  Wire local_best_wire = best_wire;
   for (int x = dx_min + 1; x <= dx_max; x++) {
     Wire c = wire;
     c.mid_x = x;
@@ -464,8 +546,9 @@ int main(int argc, char *argv[]) {
   for (int i = 0; i < num_wires; i++) {
     calc_cost(wires[i], occupancy, 1);
   }
-  printf("batches: %d , leftover: %d , num_wires: %d \n", num_batches, leftover,
-         num_wires);
+  // printf("batches: %d , leftover: %d , num_wires: %d \n", num_batches,
+  // leftover,
+  //        num_wires);
   const auto compute_start = std::chrono::steady_clock::now();
 
   double comp_time = 0.0;
