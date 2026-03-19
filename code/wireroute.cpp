@@ -1,6 +1,5 @@
 /**
  * Parallel VLSI Wire Routing via MPI
- * Name 1(andrew_id 1), Name 2(andrew_id 2)
  */
 
 #include "wireroute.h"
@@ -182,8 +181,8 @@ Wire find_best_route(const Wire &wire, std::vector<std::vector<int>> &occ,
   int dx_max = std::max(wire.start_x, wire.end_x);
   int dy_min = std::min(wire.start_y, wire.end_y);
   int dy_max = std::max(wire.start_y, wire.end_y);
-
   std::uniform_real_distribution<double> prob_dist(0.0, 1.0);
+
   if (prob_dist(rng) < SA_prob) {
     std::uniform_int_distribution<int> x_dist(dx_min, dx_max);
     std::uniform_int_distribution<int> y_dist(dy_min, dy_max);
@@ -223,7 +222,6 @@ Wire find_best_route(const Wire &wire, std::vector<std::vector<int>> &occ,
       best_wire = c;
     }
   }
-
   // y-first
   for (int y = dy_min + 1; y <= dy_max; y++) {
     Wire c = wire;
@@ -237,7 +235,6 @@ Wire find_best_route(const Wire &wire, std::vector<std::vector<int>> &occ,
       best_wire = c;
     }
   }
-
   // 3-bend
   for (int x = dx_min + 1; x < dx_max; x++) {
     for (int y = dy_min + 1; y < dy_max; y++) {
@@ -275,7 +272,7 @@ int route_batch(int pid, std::vector<Wire> &wires, int offset, int end,
                 std::vector<std::vector<int>> &occ, double SA_prob) {
   int my_send_count = 0;
   for (int i = offset; i < end; i++) {
-    calc_cost(wires[i], occ, 2);
+    calc_cost(wires[i], occ, 2); // Extract wire, ignore returned cost warning
     Wire best = find_best_route(wires[i], occ, rng, SA_prob);
     if (best != wires[i]) {
       my_send_buf[my_send_count] = i;
@@ -371,7 +368,10 @@ int main(int argc, char *argv[]) {
     }
   }
 
+  std::vector<int> data_counts(nproc);
+  std::vector<int> message_offsets(nproc);
   std::random_device rd;
+  std::mt19937 g(418);
   std::mt19937 rng(rd() ^ pid);
 
   if (pid == 0) {
@@ -392,7 +392,7 @@ int main(int argc, char *argv[]) {
   MPI_Bcast(wires.data(), num_wires * sizeof(Wire), MPI_BYTE, 0,
             MPI_COMM_WORLD);
 
-  // --- LOAD BALANCING ---
+  // --- LOAD BALANCING FIX START ---
   int num_batches = num_wires / batch_size;
   int leftover = num_wires % batch_size;
 
@@ -413,11 +413,15 @@ int main(int argc, char *argv[]) {
       int end = offset + batch_size;
       if (offset >= num_wires)
         continue;
-      if (p == 0 && (offset + batch_size) >= (num_batches * batch_size))
+
+      if (p == 0 && (offset + batch_size) >= (num_batches * batch_size)) {
         end += leftover;
+      }
       end = std::min(end, num_wires);
-      for (int i = offset; i < end; i++)
+
+      for (int i = offset; i < end; i++) {
         proc_indices[p].push_back(i);
+      }
     }
   }
 
@@ -425,69 +429,205 @@ int main(int argc, char *argv[]) {
   int round = 0;
   while (current_wire < num_wires) {
     for (int p = 0; p < nproc && current_wire < num_wires; p++) {
-      if (round < (int)proc_indices[p].size()) {
-        wires[proc_indices[p][round]] = sorted_wires[current_wire++];
+      if (static_cast<size_t>(round) <
+          proc_indices[p].size()) { // Fixed signedness warning
+        int target_index = proc_indices[p][round];
+        wires[target_index] = sorted_wires[current_wire++];
       }
     }
     round++;
   }
-  // --- END LOAD BALANCING ---
+  // --- LOAD BALANCING FIX END ---
 
-  // Fixed-size message buffers: one Allgather per chunk instead of two
-  int fixed_msg_size = (batch_size + leftover) * 5;
-  std::vector<int> my_send_buf(fixed_msg_size, -1);
-  std::vector<int> all_changes(fixed_msg_size * nproc);
-
+  int my_max_wires = (pid == 0) ? (batch_size + leftover) : batch_size;
+  std::vector<int> my_send_buf(my_max_wires * 5);
   occupancy.assign(dim_y, std::vector<int>(dim_x, 0));
-  for (int i = 0; i < num_wires; i++)
+  for (int i = 0; i < num_wires; i++) {
     calc_cost(wires[i], occupancy, 1);
+  }
 
   const auto compute_start = std::chrono::steady_clock::now();
   double comp_time = 0.0;
   double comm_time = 0.0;
 
-  for (int iter = 0; iter < SA_iters; iter++) {
-    for (int chunk = 0; chunk <= num_batches / nproc; chunk++) {
-      int offset = (chunk * (batch_size * nproc)) + (batch_size * pid);
-      int end = offset + batch_size;
+  if (nproc == 1) {
+    // ==========================================
+    // FAST PATH: Single Processor (No Network)
+    // ==========================================
 
-      // Always reset buffer BEFORE the if — prevents stale data on idle chunks
-      for (int k = 0; k < fixed_msg_size; k++)
-        my_send_buf[k] = -1;
+    // FIX: Sized for all wires, not just one batch!
+    std::vector<int> single_proc_buf(num_wires * 5);
 
+    for (int iter = 0; iter < SA_iters; iter++) {
       double start_comp = MPI_Wtime();
-      if (offset < num_wires) {
-        if (pid == 0 && (offset + batch_size) >= (num_batches * batch_size))
-          end += leftover;
-        end = std::min(end, num_wires);
-        route_batch(pid, wires, offset, end, my_send_buf.data(), rng, occupancy,
-                    SA_prob);
-      }
+      route_batch(pid, wires, 0, num_wires, single_proc_buf.data(), rng,
+                  occupancy, SA_prob);
       comp_time += (MPI_Wtime() - start_comp);
+    }
+  } else {
+    // ==========================================
+    // DISTRIBUTED PATH: Multiple Processors
+    // ==========================================
+    int left_neighbor = (pid - 1 + nproc) % nproc;
+    int right_neighbor = (pid + 1) % nproc;
 
-      double start_comm = MPI_Wtime();
-      MPI_Allgather(my_send_buf.data(), fixed_msg_size, MPI_INT,
-                    all_changes.data(), fixed_msg_size, MPI_INT,
-                    MPI_COMM_WORLD);
-      comm_time += (MPI_Wtime() - start_comm);
+    int MAX_MSG_SIZE = (batch_size * nproc + leftover) * 5 + 2;
 
-      // Apply updates from all other processors
-      for (int p = 0; p < nproc; p++) {
-        int base = p * fixed_msg_size;
-        for (int j = 0; j < fixed_msg_size; j += 5) {
-          int wire_idx = all_changes[base + j];
-          if (wire_idx == -1)
-            break; // sentinel: done
-          if (wire_idx >= offset && wire_idx < end)
-            continue; // skip our own
-          calc_cost(wires[wire_idx], occupancy, 2);
-          wires[wire_idx].move_x_start = all_changes[base + j + 1];
-          wires[wire_idx].move_x_end = all_changes[base + j + 2];
-          wires[wire_idx].mid_x = all_changes[base + j + 3];
-          wires[wire_idx].mid_y = all_changes[base + j + 4];
-          calc_cost(wires[wire_idx], occupancy, 1);
+    std::vector<int> recv_buf(MAX_MSG_SIZE);
+    MPI_Request recv_req = MPI_REQUEST_NULL;
+
+    const int NUM_BUFS = 8;
+    std::vector<std::vector<int>> send_bufs(NUM_BUFS,
+                                            std::vector<int>(MAX_MSG_SIZE));
+    std::vector<MPI_Request> send_reqs(NUM_BUFS, MPI_REQUEST_NULL);
+    int current_send_buf = 0;
+
+    auto get_next_send_buf = [&]() {
+      int idx = current_send_buf;
+      current_send_buf = (current_send_buf + 1) % NUM_BUFS;
+      if (send_reqs[idx] != MPI_REQUEST_NULL) {
+        MPI_Wait(&send_reqs[idx], MPI_STATUS_IGNORE);
+      }
+      return idx;
+    };
+
+    for (int iter = 0; iter < SA_iters; iter++) {
+      int done_tokens_received = 0;
+      int expected_tokens = nproc - 1;
+
+      MPI_Irecv(recv_buf.data(), MAX_MSG_SIZE, MPI_INT, left_neighbor, iter,
+                MPI_COMM_WORLD, &recv_req);
+
+      for (int chunk = 0; chunk <= num_batches / nproc; chunk++) {
+
+        // 1. COMPUTE LOCAL BATCH
+        int offset = (chunk * (batch_size * nproc)) + (batch_size * pid);
+        int end = offset + batch_size;
+        if (pid == 0 && (offset + batch_size) >= (num_batches * batch_size)) {
+          end += leftover;
+        }
+        end = std::min(end, num_wires);
+
+        int b_idx = get_next_send_buf();
+        int my_send_count = 0;
+
+        double start_comp = MPI_Wtime();
+        if (offset < num_wires) {
+          my_send_count =
+              route_batch(pid, wires, offset, end, send_bufs[b_idx].data() + 2,
+                          rng, occupancy, SA_prob);
+        }
+        comp_time += (MPI_Wtime() - start_comp);
+
+        double start_comm = MPI_Wtime();
+
+        // 2. SEND LOCAL BATCH TO RIGHT NEIGHBOR
+        if (my_send_count > 0) {
+          send_bufs[b_idx][0] = pid;
+          send_bufs[b_idx][1] = my_send_count / 5;
+          MPI_Isend(send_bufs[b_idx].data(), my_send_count + 2, MPI_INT,
+                    right_neighbor, iter, MPI_COMM_WORLD, &send_reqs[b_idx]);
+        }
+
+        // 3. CHECK FOR INCOMING MESSAGES (NON-BLOCKING)
+        int has_message = 0;
+        MPI_Status status;
+        MPI_Test(&recv_req, &has_message, &status);
+
+        while (has_message) {
+          int recv_count;
+          MPI_Get_count(&status, MPI_INT, &recv_count);
+          int origin_pid = recv_buf[0];
+          int num_updates = recv_buf[1];
+
+          if (num_updates == -1) {
+            done_tokens_received++;
+          } else if (num_updates > 0) {
+            for (int i = 2; i < recv_count; i += 5) {
+              int wire_idx = recv_buf[i];
+              calc_cost(wires[wire_idx], occupancy, 2);
+              wires[wire_idx].move_x_start = recv_buf[i + 1];
+              wires[wire_idx].move_x_end = recv_buf[i + 2];
+              wires[wire_idx].mid_x = recv_buf[i + 3];
+              wires[wire_idx].mid_y = recv_buf[i + 4];
+              calc_cost(wires[wire_idx], occupancy, 1);
+            }
+          }
+
+          if (origin_pid != right_neighbor) {
+            int fb_idx = get_next_send_buf();
+            std::copy(recv_buf.begin(), recv_buf.begin() + recv_count,
+                      send_bufs[fb_idx].begin());
+            MPI_Isend(send_bufs[fb_idx].data(), recv_count, MPI_INT,
+                      right_neighbor, iter, MPI_COMM_WORLD, &send_reqs[fb_idx]);
+          }
+
+          MPI_Irecv(recv_buf.data(), MAX_MSG_SIZE, MPI_INT, left_neighbor, iter,
+                    MPI_COMM_WORLD, &recv_req);
+          MPI_Test(&recv_req, &has_message, &status);
+        }
+        comm_time += (MPI_Wtime() - start_comm);
+      }
+
+      // 4. DRAIN THE RING
+      double start_drain = MPI_Wtime();
+
+      int b_idx = get_next_send_buf();
+      send_bufs[b_idx][0] = pid;
+      send_bufs[b_idx][1] = -1;
+      MPI_Isend(send_bufs[b_idx].data(), 2, MPI_INT, right_neighbor, iter,
+                MPI_COMM_WORLD, &send_reqs[b_idx]);
+
+      while (done_tokens_received < expected_tokens) {
+        MPI_Status status;
+        MPI_Wait(&recv_req, &status);
+
+        int recv_count;
+        MPI_Get_count(&status, MPI_INT, &recv_count);
+        int origin_pid = recv_buf[0];
+        int num_updates = recv_buf[1];
+
+        if (num_updates == -1) {
+          done_tokens_received++;
+        } else if (num_updates > 0) {
+          for (int i = 2; i < recv_count; i += 5) {
+            int wire_idx = recv_buf[i];
+            calc_cost(wires[wire_idx], occupancy, 2);
+            wires[wire_idx].move_x_start = recv_buf[i + 1];
+            wires[wire_idx].move_x_end = recv_buf[i + 2];
+            wires[wire_idx].mid_x = recv_buf[i + 3];
+            wires[wire_idx].mid_y = recv_buf[i + 4];
+            calc_cost(wires[wire_idx], occupancy, 1);
+          }
+        }
+
+        if (origin_pid != right_neighbor) {
+          int fb_idx = get_next_send_buf();
+          std::copy(recv_buf.begin(), recv_buf.begin() + recv_count,
+                    send_bufs[fb_idx].begin());
+          MPI_Isend(send_bufs[fb_idx].data(), recv_count, MPI_INT,
+                    right_neighbor, iter, MPI_COMM_WORLD, &send_reqs[fb_idx]);
+        }
+
+        if (done_tokens_received < expected_tokens) {
+          MPI_Irecv(recv_buf.data(), MAX_MSG_SIZE, MPI_INT, left_neighbor, iter,
+                    MPI_COMM_WORLD, &recv_req);
         }
       }
+      comm_time += (MPI_Wtime() - start_drain);
+
+      if (recv_req != MPI_REQUEST_NULL) {
+        MPI_Cancel(&recv_req);
+        MPI_Wait(&recv_req, MPI_STATUS_IGNORE);
+      }
+
+      for (int i = 0; i < NUM_BUFS; i++) {
+        if (send_reqs[i] != MPI_REQUEST_NULL) {
+          MPI_Wait(&send_reqs[i], MPI_STATUS_IGNORE);
+        }
+      }
+
+      MPI_Barrier(MPI_COMM_WORLD);
     }
   }
 
@@ -514,7 +654,6 @@ validate_wire_t Wire::to_validate_format(void) const {
   w.num_pts = 1;
   w.p[0].x = this->start_x;
   w.p[0].y = this->start_y;
-
   if (this->move_x_start) {
     if (this->start_x != this->mid_x) {
       w.p[w.num_pts].x = this->mid_x;
@@ -538,7 +677,6 @@ validate_wire_t Wire::to_validate_format(void) const {
       w.num_pts++;
     }
   }
-
   if (this->move_x_end) {
     if (this->mid_x != this->end_x) {
       w.p[w.num_pts].x = this->end_x;
