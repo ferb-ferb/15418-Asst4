@@ -214,86 +214,6 @@ Wire find_best_route(const Wire &wire, std::vector<std::vector<int>> &occ,
     }
   }
 
-  // #pragma omp parallel
-  //   {
-  //     int local_best_cost = best_cost;
-  //     Wire local_best_wire = best_wire;
-  // // x-first
-  // #pragma omp for nowait schedule(static)
-  //     for (int x = dx_min + 1; x <= dx_max; x++) {
-  //       Wire candidate = wire;
-  //       candidate.mid_x = x;
-  //       candidate.mid_y = wire.end_y;
-  //       candidate.move_x_start = true;
-  //       candidate.move_x_end = false;
-  //
-  //       int cost = calc_cost(candidate, occ, 0);
-  //       if (cost < local_best_cost) {
-  //         local_best_cost = cost;
-  //         local_best_wire = candidate;
-  //       }
-  //     }
-  //
-  // // y-first
-  // #pragma omp for nowait schedule(static)
-  //     for (int y = dy_min + 1; y <= dy_max; y++) {
-  //       Wire candidate = wire;
-  //       candidate.mid_x = wire.end_x;
-  //       candidate.mid_y = y;
-  //       candidate.move_x_start = false;
-  //       candidate.move_x_end = true;
-  //
-  //       int cost = calc_cost(candidate, occ, 0);
-  //       if (cost < local_best_cost) {
-  //         local_best_cost = cost;
-  //         local_best_wire = candidate;
-  //       }
-  //     }
-  //
-  // // 3 bend
-  // #pragma omp for nowait schedule(static) collapse(2)
-  //     for (int x = dx_min + 1; x < dx_max; x++) {
-  //       for (int y = dy_min + 1; y < dy_max; y++) {
-  //
-  //         // x-first
-  //         {
-  //           Wire candidate = wire;
-  //           candidate.mid_x = x;
-  //           candidate.mid_y = y;
-  //           candidate.move_x_start = true;
-  //           candidate.move_x_end = true;
-  //
-  //           int cost = calc_cost(candidate, occ, 0);
-  //           if (cost < local_best_cost) {
-  //             local_best_cost = cost;
-  //             local_best_wire = candidate;
-  //           }
-  //         }
-  //
-  //         // y-first
-  //         {
-  //           Wire candidate = wire;
-  //           candidate.mid_x = x;
-  //           candidate.mid_y = y;
-  //           candidate.move_x_start = false;
-  //           candidate.move_x_end = false;
-  //
-  //           int cost = calc_cost(candidate, occ, 0);
-  //           if (cost < local_best_cost) {
-  //             local_best_cost = cost;
-  //             local_best_wire = candidate;
-  //           }
-  //         }
-  //       }
-  //     }
-  // #pragma omp critical
-  //     {
-  //       if (local_best_cost < best_cost) {
-  //         best_cost = local_best_cost;
-  //         best_wire = local_best_wire;
-  //       }
-  //     }
-  //   }
   // x-first
   int local_best_cost = best_cost;
   Wire local_best_wire = best_wire;
@@ -490,12 +410,11 @@ int main(int argc, char *argv[]) {
   MPI_Bcast(wires.data(), num_wires * sizeof(Wire), MPI_BYTE, 0,
             MPI_COMM_WORLD);
 
-  // --- LOAD BALANCING FIX START ---
+  // Sorting wires - sort then deal
   int num_batches = num_wires / batch_size;
   int leftover = num_wires % batch_size;
 
   std::vector<Wire> sorted_wires = wires;
-  // 1. Sort wires descending by Manhattan distance (Longest first)
   std::sort(sorted_wires.begin(), sorted_wires.end(),
             [](const Wire &a, const Wire &b) {
               int dist_a =
@@ -505,8 +424,6 @@ int main(int argc, char *argv[]) {
               return dist_a > dist_b;
             });
 
-  // 2. Simulate your chunking loop to figure out which indices belong to which
-  // process
   std::vector<std::vector<int>> proc_indices(nproc);
   for (int chunk = 0; chunk <= num_batches / nproc; chunk++) {
     for (int p = 0; p < nproc; p++) {
@@ -526,7 +443,6 @@ int main(int argc, char *argv[]) {
     }
   }
 
-  // 3. Deal the sorted wires round-robin directly into those assigned indices
   int current_wire = 0;
   int round = 0;
   while (current_wire < num_wires) {
@@ -538,7 +454,6 @@ int main(int argc, char *argv[]) {
     }
     round++;
   }
-  // --- LOAD BALANCING FIX END ---
   int my_max_wires = (pid == 0) ? (batch_size + leftover) : batch_size;
   std::vector<int> my_send_buf(my_max_wires * 5);
   std::vector<int> all_changes((batch_size * nproc + leftover) * 5);
@@ -546,9 +461,6 @@ int main(int argc, char *argv[]) {
   for (int i = 0; i < num_wires; i++) {
     calc_cost(wires[i], occupancy, 1);
   }
-  // printf("batches: %d , leftover: %d , num_wires: %d \n", num_batches,
-  // leftover,
-  //        num_wires);
   const auto compute_start = std::chrono::steady_clock::now();
 
   double comp_time = 0.0;
@@ -568,17 +480,11 @@ int main(int argc, char *argv[]) {
         data_counts[pid] =
             route_batch(pid, wires, offset, end, my_send_buf.data(), rng,
                         occupancy, SA_prob);
-        // MPI.Bcast();
       }
       comp_time += (MPI_Wtime() - start_comp);
       double start_comm = MPI_Wtime();
       MPI_Allgather(MPI_IN_PLACE, 1, MPI_INT, data_counts.data(), 1, MPI_INT,
                     MPI_COMM_WORLD);
-      // if(pid == 0 && chunk == 0){
-      //   for(int i = 0; i < nproc; i++){
-      //     printf("data_counts[%d]: %d\n", i, data_counts[i]);
-      //   }
-      // }
       message_offsets[0] = 0;
       for (int i = 1; i < nproc; i++) {
         message_offsets[i] = message_offsets[i - 1] + data_counts[i - 1];
